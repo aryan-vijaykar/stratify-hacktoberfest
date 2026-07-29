@@ -58,6 +58,7 @@ from app.schemas.business import (
     SupplierSchema,
     SupplierUpdate,
 )
+from app.services.event_engine import EventEngineService
 
 router = APIRouter(prefix="/business", tags=["Business CRUD"])
 logger = logging.getLogger(__name__)
@@ -272,6 +273,20 @@ async def update_inventory(product_id: int, obj_in: InventoryUpdate, db: AsyncSe
         product = (await db.execute(select(Product).where(Product.id == product_id))).scalars().first()
         if product:
             product.stock_level = obj_in.current_stock
+            # Emit InventoryLow event if stock is at or below reorder point
+            if product.stock_level <= product.reorder_point:
+                try:
+                    await EventEngineService.record_inventory_low(
+                        db=db,
+                        product_id=product.id,
+                        sku=product.sku,
+                        name=product.name,
+                        current_stock=product.stock_level,
+                        reorder_point=product.reorder_point,
+                        source="inventory_service",
+                    )
+                except Exception as exc:
+                    logger.warning("Failed to emit InventoryLow event: %s", exc)
     await db.flush()
     await db.refresh(inv)
     return inv
@@ -326,6 +341,37 @@ async def create_sale(obj_in: SalesCreate, db: AsyncSession = Depends(get_db)):
 
     await db.flush()
     await db.refresh(db_obj)
+
+    # Emit RevenueIncrease event
+    try:
+        await EventEngineService.record_revenue_increase(
+            db=db,
+            amount=total_price,
+            description_text=(
+                f"Sale of {obj_in.quantity}x '{product.name}' to '{customer.name}' "
+                f"at ${obj_in.unit_price:.2f}/unit (discount: {obj_in.discount_pct}%)."
+            ),
+            customer_id=customer.id,
+            sale_id=db_obj.id,
+        )
+    except Exception as exc:
+        logger.warning("Failed to emit RevenueIncrease event: %s", exc)
+
+    # Emit InventoryLow event if product now at or below reorder point
+    if product.stock_level <= product.reorder_point:
+        try:
+            await EventEngineService.record_inventory_low(
+                db=db,
+                product_id=product.id,
+                sku=product.sku,
+                name=product.name,
+                current_stock=product.stock_level,
+                reorder_point=product.reorder_point,
+                source="sales_service",
+            )
+        except Exception as exc:
+            logger.warning("Failed to emit InventoryLow event after sale: %s", exc)
+
     return db_obj
 
 

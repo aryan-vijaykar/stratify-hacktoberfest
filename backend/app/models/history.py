@@ -33,12 +33,28 @@ class BusinessEvent(Base):
     id = Column(Integer, primary_key=True, index=True)
     event_type = Column(String(50), nullable=False, index=True)
     description = Column(String(2000), nullable=False)
+    explanation = Column(String(2000), nullable=True)
     severity = Column(String(20), default="INFO")         # INFO | WARNING | CRITICAL
     source = Column(String(50), default="system")         # system | user | ai | upload
     entity_type = Column(String(50), nullable=True)       # customer | supplier | product | invoice
     entity_id = Column(Integer, nullable=True)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
     metadata_json = Column(JSON, nullable=True)
+
+    @property
+    def get_explanation(self) -> str:
+        """Returns explanation if present, falling back to description."""
+        return self.explanation or self.description or ""
+
+    @property
+    def get_related_entities(self) -> list:
+        """Returns related_entities list from metadata_json if present, or constructs from entity_type/entity_id."""
+        if self.metadata_json and isinstance(self.metadata_json, dict) and "related_entities" in self.metadata_json:
+            return self.metadata_json["related_entities"]
+        if self.entity_type and self.entity_id:
+            return [{"entity_type": self.entity_type, "entity_id": self.entity_id}]
+        return []
+
 
 
 class RecommendationHistory(Base):

@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.business import Invoice
 from app.models.history import BusinessEvent
+from app.services.event_engine import EventEngineService
 
 logger = logging.getLogger(__name__)
 
@@ -50,22 +51,19 @@ async def scan_open_invoices(db_session_factory: async_sessionmaker):
                             inv.invoice_number,
                             days_overdue,
                         )
-                        event = BusinessEvent(
-                            event_type="PAYMENT_OVERDUE",
-                            description=(
-                                f"Invoice {inv.invoice_number} is overdue by "
-                                f"{days_overdue} days. Amount: ${inv.total_amount:.2f}."
-                            ),
-                            severity="CRITICAL",
-                            source="system",
-                            entity_type="Invoice",
-                            entity_id=inv.id,
-                            metadata_json={
-                                "days_overdue": days_overdue,
-                                "amount": inv.total_amount,
-                            },
+                        outstanding = inv.total_amount - (inv.paid_amount or 0.0)
+                        party_name = f"Customer #{inv.customer_id}" if inv.customer_id else f"Supplier #{inv.supplier_id}"
+
+                        # Emit structured InvoiceOverdue event via EventEngineService
+                        await EventEngineService.record_invoice_overdue(
+                            db=db,
+                            invoice_id=inv.id,
+                            invoice_number=inv.invoice_number,
+                            party_name=party_name,
+                            days_overdue=days_overdue,
+                            amount=outstanding,
+                            source="collections_service",
                         )
-                        db.add(event)
 
                 # 2. Due Soon Check (due within 3 days)
                 elif inv.due_date > now_dt and (inv.due_date - now_dt).days <= 3:
