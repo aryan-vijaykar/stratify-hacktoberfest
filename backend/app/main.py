@@ -32,6 +32,7 @@ import app.models.history   # noqa: F401
 import app.models.materials   # noqa: F401
 import app.models.supply_chain   # noqa: F401
 import app.models.collections   # noqa: F401
+import app.models.memory   # noqa: F401
 
 # Routers — Phase 1
 from app.routers.business import router as business_router
@@ -49,6 +50,11 @@ from app.routers.risk import router as risk_router
 
 # Routers — Phase 4
 from app.routers.decision import router as decision_router
+from app.routers.memory import router as memory_router
+
+# Routers — Phase 5 (Event Engine)
+from app.routers.events import router as events_router
+
 
 # ---------------------------------------------------------------------------
 # Logging Configuration
@@ -96,6 +102,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator:
                 logger.info("Migrating customers table: adding region column")
                 await conn.execute(text("ALTER TABLE customers ADD COLUMN region VARCHAR(100) DEFAULT 'East'"))
                 logger.info("customers table migrated successfully.")
+            # Add explanation column to business_events if missing
+            cursor_be = await conn.execute(text("PRAGMA table_info(business_events)"))
+            columns_be = cursor_be.fetchall()
+            col_names_be = [col[1] for col in columns_be]
+            if "explanation" not in col_names_be:
+                logger.info("Migrating business_events table: adding explanation column")
+                await conn.execute(text("ALTER TABLE business_events ADD COLUMN explanation VARCHAR(2000)"))
+                logger.info("business_events table migrated successfully.")
         except Exception as e:
             logger.error("Lifespan database schema migration failed: %s", e)
 
@@ -175,8 +189,13 @@ app.include_router(ai_router, prefix=API_V1)
 app.include_router(forecast_router, prefix=API_V1)
 app.include_router(risk_router, prefix=API_V1)
 
-# Phase 4 — Decision Intelligence
+# Phase 4 — Decision Intelligence & Memory Engine
 app.include_router(decision_router, prefix=API_V1)
+app.include_router(memory_router, prefix=API_V1)
+
+# Phase 5 — Event Engine
+app.include_router(events_router, prefix=API_V1)
+
 
 
 # ---------------------------------------------------------------------------
@@ -193,7 +212,7 @@ async def root():
         "environment": settings.ENVIRONMENT,
         "docs": "/docs",
         "api_base": API_V1,
-        "phases_active": ["Phase 1: CRUD", "Phase 2: AI", "Phase 3: Predictive", "Phase 4: Decision"],
+        "phases_active": ["Phase 1: CRUD", "Phase 2: AI", "Phase 3: Predictive", "Phase 4: Decision", "Phase 5: Event Engine"],
     }
 
 
